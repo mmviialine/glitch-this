@@ -109,16 +109,16 @@ class ImageGlitcher:
 
     @overload
     def glitch_image(self, src_img: Union[str, Image.Image], glitch_amount: Union[int, float], seed: Optional[Union[int, float]] = None, glitch_change: Union[int, float] = 0.0,
-                     color_offset: bool = False, scan_lines: bool = False, gif: Literal[False] = False, cycle: bool = False, frames: int = 23, step: int = 1) -> Image.Image:
+                     color_offset: bool = False, scan_lines: bool = False, gif: Literal[False] = False, cycle: bool = False, frames: int = 23, step: int = 1, vertical: bool = False, color_blocks: bool = False) -> Image.Image:
         ...
 
     @overload
     def glitch_image(self, src_img: Union[str, Image.Image], glitch_amount: Union[int, float], seed: Optional[Union[int, float]] = None, glitch_change: Union[int, float] = 0.0,
-                     color_offset: bool = False, scan_lines: bool = False, gif: Literal[True] = False, cycle: bool = False, frames: int = 23, step: int = 1) -> List[Image.Image]: # type: ignore
+                     color_offset: bool = False, scan_lines: bool = False, gif: Literal[True] = False, cycle: bool = False, frames: int = 23, step: int = 1, vertical: bool = False, color_blocks: bool = False) -> List[Image.Image]: # type: ignore
         ...
 
     def glitch_image(self, src_img: Union[str, Image.Image], glitch_amount: Union[int, float], seed: Optional[Union[int, float]] = None, glitch_change: Union[int, float] = 0.0,
-                     color_offset: bool = False, scan_lines: bool = False, gif: bool = False, cycle: bool = False, frames: int = 23, step: int = 1) -> Union[Image.Image, List[Image.Image]]:
+                     color_offset: bool = False, scan_lines: bool = False, gif: bool = False, cycle: bool = False, frames: int = 23, step: int = 1, vertical: bool = False, color_blocks: bool = False) -> Union[Image.Image, List[Image.Image]]:
         """
          Sets up values needed for glitching the image
 
@@ -133,6 +133,8 @@ class ImageGlitcher:
          glitch_amount: Level of glitch intensity, [0.1, 10.0] (inclusive)
 
          glitch_change: Increment/Decrement in glitch_amount after every glitch
+                        A negative value fades the glitch out; the GIF ends
+                        once the minimum (no glitch) level is reached
 
          cycle: Whether or not to cycle glitch_amount back to glitch_min or glitch_max
                 if it over/underflows
@@ -146,6 +148,12 @@ class ImageGlitcher:
          frames: How many glitched frames should be generated for GIF
 
          step: Glitch every step'th frame, defaults to 1 (i.e all frames)
+
+         vertical: Specify True to shift vertical bands (cut vertically)
+                   instead of horizontal bands
+
+         color_blocks: Specify True to apply a retro pixel-art style glitch
+                       (pixelation + blocky band displacement) to the image
 
          seed: Set a random seed for generating similar images across runs,
                defaults to None (random seed).
@@ -179,6 +187,10 @@ class ImageGlitcher:
             raise ValueError('scan_lines param must be a boolean')
         if not isinstance(gif, bool):
             raise ValueError('gif param must be a boolean')
+        if not isinstance(vertical, bool):
+            raise ValueError('vertical param must be a boolean')
+        if not isinstance(color_blocks, bool):
+            raise ValueError('color_blocks param must be a boolean')
 
         self.seed = seed
         if self.seed:
@@ -209,7 +221,7 @@ class ImageGlitcher:
         # Glitching begins here
         if not gif:
             # Return glitched image
-            return self.__get_glitched_img(glitch_amount, color_offset, scan_lines)
+            return self.__get_glitched_img(glitch_amount, color_offset, scan_lines, vertical, color_blocks)
 
         # Return glitched GIF
         # Set up directory for storing glitched images
@@ -234,11 +246,20 @@ class ImageGlitcher:
                 # Other frames will be appended as they are
                 glitched_imgs.append(img.copy())
                 continue
+            if glitch_change < 0 and not cycle:
+                # Start every frame from the original image, otherwise
+                # glitches left over from previous frames would remain
+                # and the decreasing glitch_amount would have no effect
+                self.outputarr = np.array(self.inputarr)
             glitched_img = self.__get_glitched_img(
-                glitch_amount, color_offset, scan_lines)
+                glitch_amount, color_offset, scan_lines, vertical, color_blocks)
             file_path = os.path.join(self.gif_dirpath, 'glitched_frame.png')
             glitched_img.save(file_path, compress_level=3)
             glitched_imgs.append(Image.open(file_path).copy())
+            # A decreasing glitch_amount means the glitch fades away,
+            # so end the GIF once a frame with no glitch is reached
+            if glitch_change < 0 and not cycle and glitch_amount <= self.glitch_min:
+                break
             # Change glitch_amount by given value
             glitch_amount = self.__change_glitch(
                 glitch_amount, glitch_change, cycle)
@@ -250,7 +271,7 @@ class ImageGlitcher:
         return glitched_imgs
 
     def glitch_gif(self, src_gif: Union[str, Image.Image], glitch_amount: Union[int, float], seed: Union[int, float] = None, glitch_change: Union[int, float] = 0.0,
-                   color_offset: bool = False, scan_lines: bool = False, gif: bool = False, cycle: bool = False, step=1) -> Tuple[List[Image.Image], float, int]:
+                   color_offset: bool = False, scan_lines: bool = False, gif: bool = False, cycle: bool = False, step=1, vertical: bool = False, color_blocks: bool = False) -> Tuple[List[Image.Image], float, int]:
         """
          Glitch each frame of input GIF
          Returns the following:
@@ -266,11 +287,17 @@ class ImageGlitcher:
          glitch_amount: Level of glitch intensity, [0.1, 10.0] (inclusive)
 
          glitch_change: Increment/Decrement in glitch_amount after every glitch
+                        A negative value fades the glitch out; the GIF ends
+                        once the minimum (no glitch) level is reached
          cycle: Whether or not to cycle glitch_amount back to glitch_min or glitch_max
                 if it over/underflows
          color_offset: Specify True if color_offset effect should be applied
          scan_lines: Specify True if scan_lines effect should be applied
          step: Glitch every step'th frame, defaults to 1 (i.e all frames)
+         vertical: Specify True to shift vertical bands (cut vertically)
+                   instead of horizontal bands
+         color_blocks: Specify True to apply a retro pixel-art style glitch
+                       (pixelation + blocky band displacement) to the image
          seed: Set a random seed for generating similar images across runs,
                defaults to None (random seed)
         """
@@ -298,6 +325,10 @@ class ImageGlitcher:
             raise ValueError('color_offset param must be a boolean')
         if not isinstance(scan_lines, bool):
             raise ValueError('scan_lines param must be a boolean')
+        if not isinstance(vertical, bool):
+            raise ValueError('vertical param must be a boolean')
+        if not isinstance(color_blocks, bool):
+            raise ValueError('color_blocks param must be a boolean')
         if not self.__isgif(src_gif):
             raise Exception(
                 'Input image must be a path to a GIF or be a GIF Image object')
@@ -355,14 +386,19 @@ class ImageGlitcher:
                 i += 1
                 continue
             glitched_img: Image.Image = self.glitch_image(src_frame_path, glitch_amount,
-                                                          color_offset=color_offset, scan_lines=scan_lines)
+                                                          color_offset=color_offset, scan_lines=scan_lines,
+                                                          vertical=vertical, color_blocks=color_blocks)
             file_path = os.path.join(self.gif_dirpath, 'glitched_frame.png')
             glitched_img.save(file_path, compress_level=3)
             glitched_imgs.append(Image.open(file_path).copy())
+            i += 1
+            # A decreasing glitch_amount means the glitch fades away,
+            # so end the GIF once a frame with no glitch is reached
+            if glitch_change < 0 and not cycle and glitch_amount <= self.glitch_min:
+                break
             # Change glitch_amount by given value
             glitch_amount = self.__change_glitch(
                 glitch_amount, glitch_change, cycle)
-            i += 1
 
         # Set decimal precision back to original value
         getcontext().prec = original_prec
@@ -386,37 +422,59 @@ class ImageGlitcher:
                 self.glitch_max)) if cycle else self.glitch_max
         return glitch_amount
 
-    def __get_glitched_img(self, glitch_amount: Union[int, float], color_offset: int, scan_lines: bool) -> Image.Image:
+    def __get_glitched_img(self, glitch_amount: Union[int, float], color_offset: int, scan_lines: bool, vertical: bool = False, color_blocks: bool = False) -> Image.Image:
         """
          Glitches the image located at given path
          Intensity of glitch depends on glitch_amount
+         If vertical is True, vertical bands are shifted up/down
+         instead of horizontal bands being shifted left/right
+         If color_blocks is True, a pixel-art style glitch is applied
+         (pixelation + blocky band displacement)
         """
-        max_offset = int((glitch_amount ** 2 / 100) * self.img_width)
         doubled_glitch_amount = int(glitch_amount * 2)
-        for shift_number in range(0, doubled_glitch_amount):
 
+        if color_blocks:
+            # Pixel-art style glitch replaces the normal band shifting
             if self.seed:
-                # This is not deterministic as glitch amount changes the amount of shifting,
-                # so get the same values on each iteration on a new pseudo-seed that is
-                # offseted by the index we're iterating
-                self.__reset_rng_seed(offset=shift_number)
-
-            # Setting up offset needed for the randomized glitching
-            current_offset = random.randint(-max_offset, max_offset)
-
-            if current_offset == 0:
-                # Can't wrap left OR right when offset is 0, End of Array
-                continue
-            if current_offset < 0:
-                # Grab a rectangle of specific width and heigh, shift it left
-                # by a specified offset
-                # Wrap around the lost pixel data from the right
-                self.__glitch_left(-current_offset)
+                self.__reset_rng_seed()
+            self.__pixel_glitch(glitch_amount, vertical)
+            if self.seed:
+                self.__reset_rng_seed()
+        else:
+            if vertical:
+                # Vertical shifts move along the height of the image
+                max_offset = int((glitch_amount ** 2 / 100) * self.img_height)
             else:
-                # Grab a rectangle of specific width and height, shift it right
-                # by a specified offset
-                # Wrap around the lost pixel data from the left
-                self.__glitch_right(current_offset)
+                max_offset = int((glitch_amount ** 2 / 100) * self.img_width)
+            for shift_number in range(0, doubled_glitch_amount):
+
+                if self.seed:
+                    # This is not deterministic as glitch amount changes the amount of shifting,
+                    # so get the same values on each iteration on a new pseudo-seed that is
+                    # offseted by the index we're iterating
+                    self.__reset_rng_seed(offset=shift_number)
+
+                # Setting up offset needed for the randomized glitching
+                current_offset = random.randint(-max_offset, max_offset)
+
+                if current_offset == 0:
+                    # Can't wrap up OR down when offset is 0, End of Array
+                    continue
+                if vertical:
+                    if current_offset < 0:
+                        self.__glitch_up(-current_offset)
+                    else:
+                        self.__glitch_down(current_offset)
+                elif current_offset < 0:
+                    # Grab a rectangle of specific width and heigh, shift it left
+                    # by a specified offset
+                    # Wrap around the lost pixel data from the right
+                    self.__glitch_left(-current_offset)
+                else:
+                    # Grab a rectangle of specific width and height, shift it right
+                    # by a specified offset
+                    # Wrap around the lost pixel data from the left
+                    self.__glitch_right(current_offset)
 
         if self.seed:
             # Get the same channels on the next call, we have to reset the rng seed
@@ -445,6 +503,70 @@ class ImageGlitcher:
         # Only the R, G, and B channels are assigned 0 values
         # Alpha is left untouched (if present)
         self.outputarr[::2, :, :3] = [0, 0, 0]
+
+    def __pixel_glitch(self, glitch_amount: Union[int, float], vertical: bool = False):
+        """
+        Applies a retro pixel-art style glitch (the -z / --color-blocks effect):
+
+        1. Pixelates the whole image into tall vertical pixel strips (narrow
+           in width, tall in height) by downscaling more along X than Y and
+           upscaling with nearest-neighbour sampling.
+        2. Shifts random horizontal (or vertical) bands at strip granularity,
+           giving the characteristic blocky "broken scanline" look.
+        """
+        height, width = self.inputarr.shape[:2]
+        if height < 2 or width < 2:
+            # Too small to pixelate meaningfully
+            return
+
+        # Tall, narrow pixels: strip width is much smaller than strip height.
+        # Strip height grows with the glitch level (level 5 -> 60px tall, 15px wide)
+        strip_h = max(12, int(glitch_amount * 12))
+        strip_w = max(3, int(glitch_amount * 3))
+
+        # Step 1: pixelate by averaging down then expanding with hard edges
+        img = Image.fromarray(self.inputarr, self.img_mode)
+        small_w = max(1, width // strip_w)
+        small_h = max(1, height // strip_h)
+        small = img.resize((small_w, small_h), Image.BILINEAR)
+        pixelated = small.resize((width, height), Image.NEAREST)
+        arr = np.array(pixelated)
+
+        # Step 2: quantize colours into a limited retro palette so the
+        # flat-colour blocks read more like the reference pixel-art style
+        levels = max(4, 16 - int(glitch_amount))
+        step = max(1, 256 // levels)
+        rgb = arr[:, :, :3]
+        arr[:, :, :3] = np.clip(
+            (rgb // step) * step + step // 2, 0, 255).astype(arr.dtype)
+
+        # Step 3: strip-level band displacement (the "glitch")
+        shifts = max(1, int(glitch_amount * 2))
+        for _ in range(shifts):
+            if vertical:
+                band_w = random.randint(strip_w, max(strip_w, width // 4))
+                band_x = random.randint(0, max(0, width - band_w))
+                band_w = min(band_w, width - band_x)
+                if band_w <= 0:
+                    continue
+                shift = random.randint(-height // 4, height // 4)
+                shift = int(shift / strip_h) * strip_h
+                if shift:
+                    arr[:, band_x:band_x + band_w] = np.roll(
+                        arr[:, band_x:band_x + band_w], shift, axis=0)
+            else:
+                band_h = random.randint(strip_h, max(strip_h, height // 6))
+                band_y = random.randint(0, max(0, height - band_h))
+                band_h = min(band_h, height - band_y)
+                if band_h <= 0:
+                    continue
+                shift = random.randint(-width // 3, width // 3)
+                shift = int(shift / strip_w) * strip_w
+                if shift:
+                    arr[band_y:band_y + band_h, :] = np.roll(
+                        arr[band_y:band_y + band_h, :], shift, axis=1)
+
+        self.outputarr = arr
 
     def __glitch_left(self, offset: int):
         """
@@ -516,6 +638,56 @@ class ImageGlitcher:
         wrap_chunk = self.inputarr[start_y:stop_y, stop_x:]
         self.outputarr[start_y:stop_y, start_x:] = right_chunk
         self.outputarr[start_y:stop_y, :start_x] = wrap_chunk
+
+    def __glitch_up(self, offset: int):
+        """
+         Grabs a verticle rectangle from inputarr and shifts it upwards
+         Any lost pixel data is wrapped back to the bottom
+         Rectangle's Width and Height are determined from offset
+
+         This is the vertical counterpart of __glitch_left-
+         a band of columns is moved up instead of a band of rows moving left
+        """
+        # Setting up values that will determine the rectangle width
+        start_x = random.randint(0, self.img_width)
+        chunk_width = random.randint(1, int(self.img_width / 4))
+        chunk_width = min(chunk_width, self.img_width - start_x)
+        stop_x = start_x + chunk_width
+
+        # For copy
+        start_y = offset
+        # For paste
+        stop_y = self.img_height - start_y
+
+        up_chunk = self.inputarr[start_y:, start_x:stop_x]
+        wrap_chunk = self.inputarr[:start_y, start_x:stop_x]
+        self.outputarr[:stop_y, start_x:stop_x] = up_chunk
+        self.outputarr[stop_y:, start_x:stop_x] = wrap_chunk
+
+    def __glitch_down(self, offset: int):
+        """
+         Grabs a verticle rectangle from inputarr and shifts it downwards
+         Any lost pixel data is wrapped back to the top
+         Rectangle's Width and Height are determined from offset
+
+         This is the vertical counterpart of __glitch_right-
+         a band of columns is moved down instead of a band of rows moving right
+        """
+        # Setting up values that will determine the rectangle width
+        start_x = random.randint(0, self.img_width)
+        chunk_width = random.randint(1, int(self.img_width / 4))
+        chunk_width = min(chunk_width, self.img_width - start_x)
+        stop_x = start_x + chunk_width
+
+        # For copy
+        stop_y = self.img_height - offset
+        # For paste
+        start_y = offset
+
+        down_chunk = self.inputarr[:stop_y, start_x:stop_x]
+        wrap_chunk = self.inputarr[stop_y:, start_x:stop_x]
+        self.outputarr[start_y:, start_x:stop_x] = down_chunk
+        self.outputarr[:start_y, start_x:stop_x] = wrap_chunk
 
     def __color_offset(self, offset_x: int, offset_y: int, channel_index: int):
         """
